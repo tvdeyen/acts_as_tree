@@ -39,23 +39,34 @@ module ActsAsTree
     # * <tt>foreign_key</tt> - specifies the column name to use for tracking of the tree (default: +parent_id+)
     # * <tt>order</tt> - makes it possible to sort the children according to this SQL snippet.
     # * <tt>counter_cache</tt> - keeps a count in a +children_count+ column if set to +true+ (default: +false+).
+    # * <tt>destroy_dependent</tt> - set to +false+ if you do not want the dependent children to be destroyed on destroy. (default: +true+)
+    # * <tt>root_detector</tt> - sets the sequel condition for detecting the roots in +foreign_key+ column. (default: +IS NULL+)
     def acts_as_tree(options = {})
-      configuration = { :foreign_key => "parent_id", :order => nil, :counter_cache => nil }
+      configuration = { :foreign_key => "parent_id", :order => nil, :counter_cache => nil, :destroy_dependent => true, :root_detector => 'IS NULL' }
       configuration.update(options) if options.is_a?(Hash)
 
+      has_many_options = {
+        :class_name => name,
+        :foreign_key => configuration[:foreign_key],
+        :order => configuration[:order]
+      }
+
+      has_many_options[:dependent] = :destroy if configuration[:destroy_dependent]
+
       belongs_to :parent, :class_name => name, :foreign_key => configuration[:foreign_key], :counter_cache => configuration[:counter_cache]
-      has_many :children, :class_name => name, :foreign_key => configuration[:foreign_key], :order => configuration[:order], :dependent => :destroy
+      has_many :children, has_many_options
 
       class_eval <<-EOV
         include ActsAsTree::InstanceMethods
 
         def self.roots
-          find(:all, :conditions => "#{configuration[:foreign_key]} IS NULL", :order => #{configuration[:order].nil? ? "nil" : %Q{"#{configuration[:order]}"}})
+          find(:all, :conditions => "#{configuration[:foreign_key]} #{configuration[:root_detector]}", :order => #{configuration[:order].nil? ? "nil" : %Q{"#{configuration[:order]}"}})
         end
 
         def self.root
-          find(:first, :conditions => "#{configuration[:foreign_key]} IS NULL", :order => #{configuration[:order].nil? ? "nil" : %Q{"#{configuration[:order]}"}})
+          find(:first, :conditions => "#{configuration[:foreign_key]} #{configuration[:root_detector]}", :order => #{configuration[:order].nil? ? "nil" : %Q{"#{configuration[:order]}"}})
         end
+
       EOV
     end
   end
@@ -90,6 +101,25 @@ module ActsAsTree
     def self_and_siblings
       parent ? parent.children : self.class.roots
     end
+
+    # Returns all children down the whole tree to where no more children are.
+    #
+    #   subchild1.all_children # => [subchild1, subchild2, subchild1.1, subchild1.2, subchild2.1, subchild2.2]
+    def all_children
+      list = []
+      collect_child(self, list)
+      list
+    end
+
+    private
+
+    def collect_child(node, list)
+      list << node
+      node.children.each do |child|
+        collect_child(child, list)
+      end
+    end
+
   end
 end
 
